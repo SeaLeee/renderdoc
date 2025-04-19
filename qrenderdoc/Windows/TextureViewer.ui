@@ -474,7 +474,24 @@
       </property>
      </widget>
     </item>
-    <item>
+	<item>
+		<widget class="QToolButton" name="saveAllTex">
+			<property name="toolTip">
+				<string>Save all Textures => D:\\Github\\renderdoc_capture_tex </string>
+			</property>
+			<property name="text">
+				<string/>
+			</property>
+			<property name="icon">
+				<iconset resource="../Resources/resources.qrc">
+				<normaloff>:/saveAll.png</normaloff>:/saveAll.png</iconset>
+			</property>
+			<property name="autoRaise">
+				<bool>true</bool>
+			</property>
+		</widget>
+	</item>
+	<item>
      <widget class="QToolButton" name="texListShow">
       <property name="toolTip">
        <string>Open Texture List</string>

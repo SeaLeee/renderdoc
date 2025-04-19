@@ -4096,6 +4096,31 @@ void TextureViewer::on_saveTex_clicked()
   }
 }
 
+static TextureSave tmpSaveCfg;
+void TextureViewer::on_saveAllTex_clicked()
+{
+  for(const TextureDescription &tex : m_Ctx.GetTextures())
+  {
+    tmpSaveCfg.resourceId = tex.resourceId;
+    tmpSaveCfg.destType = FileType::TGA;
+    tmpSaveCfg.channelExtract = -1;
+    tmpSaveCfg.alphaCol = FloatVector(0, 0, 0, 0);
+    QString fn;
+    fn.sprintf("D:\\Github\\renderdoc_capture_tex\\%d.tga", tex.resourceId);
+
+    QFileInfo qi(fn);
+    QDir dir(qi.absoluteDir());
+    if(!dir.exists())
+    {
+      dir.makeAbsolute();
+    }
+    ResultDetails ret = ResultDetails();
+    m_Ctx.Replay().BlockInvoke([this, &ret, fn](IReplayController *r) {
+      ret = r->SaveTexture(tmpSaveCfg, fn.toUtf8().data());
+    });
+  }
+}
+
 void TextureViewer::on_debugPixelContext_clicked()
 {
   if(m_PickedPoint.x() < 0 || m_PickedPoint.y() < 0)
