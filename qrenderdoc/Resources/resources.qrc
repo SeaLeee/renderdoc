@@ -130,8 +130,9 @@
         <file>plugin_add.png</file>
         <file>plugin_add@2x.png</file>
         <file>save.png</file>
-		<file>saveAll.png</file>
-        <file>save@2x.png</file>
+    		<file>saveAll.png</file>
+        <file>saveTexDensity.png</file>
+        <file>save@2x.png</file>    
         <file>text_add.png</file>
         <file>text_add@2x.png</file>
         <file>tick.png</file>

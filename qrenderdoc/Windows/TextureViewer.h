@@ -193,6 +193,7 @@ private slots:
   void on_texListShow_clicked();
   void on_saveTex_clicked();
   void on_saveAllTex_clicked();
+  void on_saveTexDensity_clicked();
 
   void on_debugPixelContext_clicked();
   void on_pixelHistory_clicked();
