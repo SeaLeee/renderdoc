@@ -4099,14 +4099,22 @@ void TextureViewer::on_saveTex_clicked()
 static TextureSave tmpSaveCfg;
 void TextureViewer::on_saveAllTex_clicked()
 {
+  QString saveDir = QFileDialog::getExistingDirectory(
+      this, tr("选择保存所有纹理的目录"), QDir::currentPath(),
+      QFileDialog::ShowDirsOnly | QFileDialog::DontResolveSymlinks);
+
+  if(saveDir.isEmpty())
+    return;  
   for(const TextureDescription &tex : m_Ctx.GetTextures())
   {
     tmpSaveCfg.resourceId = tex.resourceId;
     tmpSaveCfg.destType = FileType::TGA;
     tmpSaveCfg.channelExtract = -1;
     tmpSaveCfg.alphaCol = FloatVector(0, 0, 0, 0);
-    QString fn;
-    fn.sprintf("D:\\Github\\renderdoc_capture_tex\\%d.tga", tex.resourceId);
+    QString texName;
+    texName.sprintf("%d.tga", tex.resourceId);
+
+    QString fn = QDir(saveDir).absoluteFilePath(texName);
 
     QFileInfo qi(fn);
     QDir dir(qi.absoluteDir());
