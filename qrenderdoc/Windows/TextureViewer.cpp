@@ -4200,6 +4200,828 @@ float calculateTextureArea(const rdcarray<FloatVector> &uvs, uint32_t texWidth, 
   return area;
 }
 
+//void TextureViewer::on_saveTexDensity_clicked()
+//{
+//  if(!m_Ctx.IsCaptureLoaded())
+//  {
+//    RDDialog::critical(this, tr("Error"), tr("No capture loaded"));
+//    return;
+//  }
+//
+//  QString fileName;
+//  fileName.sprintf("texDensity.csv");
+//  QString filePath = QFileDialog::getSaveFileName(
+//      this, tr("Save texture density data"), QDir(QDir::currentPath()).filePath(fileName),
+//      tr("CSV Files (*.csv)"));
+//
+//  if(filePath.isEmpty())
+//    return;
+//
+//  QFile file(filePath);
+//  if(!file.open(QIODevice::WriteOnly | QIODevice::Text))
+//  {
+//    RDDialog::critical(this, tr("Error"), tr("Cannot create file: %1").arg(file.errorString()));
+//    return;
+//  }
+//
+//  QTextStream out(&file);
+//
+//  // Write CSV header
+//  out << "Drawcall ID,Pass Path,Mesh ID,Mesh Name,Triangle Count,Surface Area(m^2),Texture Area(m^2), Related Texture ID,Related Texture Name,Pixel Density(PPM)\n";
+//
+//  // Show busy cursor
+//  QApplication::setOverrideCursor(QCursor(Qt::WaitCursor));
+//
+//  // For storing processed mesh IDs to avoid duplicate processing
+//  QMap<ResourceId, bool> processedMeshes;
+//
+//  // Get root actions
+//  const rdcarray<ActionDescription> &actions = m_Ctx.CurRootActions();
+//
+//  // Helper function to process a drawcall
+//  auto processDrawcall = [this, &out, &processedMeshes](IReplayController *r,
+//                                                        const ActionDescription *action,
+//                                                        const QString &passPath) {
+//    // Set current event
+//    r->SetFrameEvent(action->eventId, true);
+//
+//    // Get current pipeline state
+//    const PipeState &state = m_Ctx.CurPipelineState();
+//
+//    // Get vertex and index buffers
+//    rdcarray<BoundVBuffer> vbs = state.GetVBuffers();
+//    const BoundVBuffer &ib = state.GetIBuffer();
+//
+//    // Get vertex input attributes
+//    rdcarray<VertexInputAttribute> attrs = state.GetVertexInputs();
+//
+//    // Check if there is valid vertex data
+//    if(vbs.empty() || attrs.empty())
+//      return;
+//
+//    // Find position attribute
+//    int positionAttrIndex = -1;
+//    for(int i = 0; i < attrs.size(); i++)
+//    {
+//      if(attrs[i].name.contains("POSITION") || attrs[i].name.contains("Position"))
+//      {
+//        positionAttrIndex = i;
+//        break;
+//      }
+//    }
+//
+//    if(positionAttrIndex == -1)
+//      return;
+//
+//    // Get position attribute information
+//    const VertexInputAttribute &posAttr = attrs[positionAttrIndex];
+//    uint32_t vertexStride = vbs[posAttr.vertexBuffer].byteStride;
+//
+//    // Check if the vertex buffer has been processed
+//    ResourceId vbufId = vbs[posAttr.vertexBuffer].resourceId;
+//
+//    // Get index array
+//    rdcarray<uint32_t> indices;
+//    uint32_t numIndices = action->numIndices;
+//
+//    if(action->flags & ActionFlags::Indexed)
+//    {
+//      // For indexed drawing, get index buffer data
+//      bytebuf ibufData =
+//          r->GetBufferData(ib.resourceId, ib.byteOffset + action->indexOffset * ib.byteStride,
+//                           numIndices * ib.byteStride);
+//
+//      indices.resize(numIndices);
+//      // Parse indices based on index buffer type
+//      if(ib.byteStride == 2)    // 16-bit index
+//      {
+//        for(uint32_t i = 0; i < numIndices; i++)
+//        {
+//          uint16_t idx;
+//          memcpy(&idx, ibufData.data() + i * 2, sizeof(uint16_t));
+//          indices[i] = idx + action->baseVertex;
+//        }
+//      }
+//      else    // 32-bit index
+//      {
+//        for(uint32_t i = 0; i < numIndices; i++)
+//        {
+//          uint32_t idx;
+//          memcpy(&idx, ibufData.data() + i * 4, sizeof(uint32_t));
+//          indices[i] = idx + action->baseVertex;
+//        }
+//      }
+//    }
+//    else
+//    {
+//      // For non-indexed drawing, create sequential indices
+//      indices.resize(numIndices);
+//      for(uint32_t i = 0; i < numIndices; i++)
+//        indices[i] = i + action->vertexOffset;
+//    }
+//
+//    // Get vertex buffer data
+//    rdcarray<byte> vbufData = r->GetBufferData(vbufId, vbs[posAttr.vertexBuffer].byteOffset, 0);
+//
+//    // Calculate mesh surface area and triangle count
+//    float totalSurfaceArea = 0.0f;
+//    float totalTextureArea = 0.0f;
+//    uint32_t triangleCount = numIndices / 3;
+//
+//    // Process all triangles
+//    for(uint32_t i = 0; i < indices.size(); i += 3)
+//    {
+//      if(i + 2 >= indices.size())
+//        break;
+//
+//      // Store triangle vertex positions
+//      rdcarray<FloatVector> positions;
+//      positions.resize(3);
+//
+//      bool validTriangle = true;
+//      for(int v = 0; v < 3; v++)
+//      {
+//        uint32_t idx = indices[i + v];
+//
+//        if(vbufData.isEmpty() ||
+//           idx * vertexStride + posAttr.byteOffset + (sizeof(float) * 4) > vbufData.size())
+//        {
+//          validTriangle = false;
+//          break;
+//        }
+//    
+//        const byte *vertex = vbufData.data() + idx * vertexStride;
+//
+//        // Read position data based on attribute format
+//        {
+//          FloatVector pos;
+//
+//          // Process different component counts
+//          switch(posAttr.format.compCount)
+//          {
+//            case 4: memcpy(&pos, vertex + posAttr.byteOffset, sizeof(float) * 4); break;
+//            case 3:
+//              memcpy(&pos, vertex + posAttr.byteOffset, sizeof(float) * 3);
+//              pos.w = 1.0f;
+//              break;
+//            case 2:
+//              memcpy(&pos, vertex + posAttr.byteOffset, sizeof(float) * 2);
+//              pos.z = 0.0f;
+//              pos.w = 1.0f;
+//              break;
+//            default: break;
+//          }
+//
+//          positions[v] = pos;
+//        }
+//      }
+//
+//      if(!validTriangle)
+//        continue;
+//      // Get UV information from the mesh
+//      rdcarray<FloatVector> uvs;
+//      uvs.resize(3);
+//
+//      // Find UV attribute in the vertex data
+//      int uvAttrIndex = -1;
+//      for(int j = 0; j < attrs.size(); j++)
+//      {
+//        if(attrs[j].name.contains("TEXCOORD") || attrs[j].name.contains("UV"))
+//        {
+//          uvAttrIndex = j;
+//          break;
+//        }
+//      }
+//
+//      if(uvAttrIndex != -1)
+//      {
+//        const VertexInputAttribute &uvAttr = attrs[uvAttrIndex];
+//        
+//        // Extract UV coordinates for the three vertices
+//        for(int v = 0; v < 3; v++)
+//        {
+//          uint32_t idx = indices[i + v];
+//          const byte *vertex = vbufData.data() + idx * vertexStride;
+//          
+//          // Read UV data based on attribute format
+//          switch(uvAttr.format.compCount)
+//          {
+//            case 4: memcpy(&uvs[v], vertex + uvAttr.byteOffset, sizeof(float) * 4); break;
+//            case 3:
+//              memcpy(&uvs[v], vertex + uvAttr.byteOffset, sizeof(float) * 3);
+//              uvs[v].w = 1.0f;
+//              break;
+//            case 2:
+//              memcpy(&uvs[v], vertex + uvAttr.byteOffset, sizeof(float) * 2);
+//              uvs[v].z = 0.0f;
+//              uvs[v].w = 1.0f;
+//              break;
+//            default: break;
+//          }
+//        }
+//        
+//        // Find the texture dimensions for this material
+//        uint32_t texWidth = 1;
+//        uint32_t texHeight = 1;
+//        TextureDescription *texDesc = nullptr;
+//
+//        // Find the texture dimensions by resourceId
+//        ResourceId textureId;
+//        // Try to find the maximum texture from all bound resources
+//        const rdcarray<TextureDescription> &textures = m_Ctx.GetTextures();
+//        ResourceId maxTextureId;
+//        uint64_t maxPixelCount = 0;
+//
+//        // Get fragment shader resources
+//        const ShaderReflection *pixelShader = state.GetShaderReflection(ShaderStage::Pixel);
+//        if(pixelShader)
+//        {
+//          // Find texture type resources
+//          for(int index = 0; index < pixelShader->readOnlyResources.size(); index++)
+//          {
+//            const ShaderResource &res = pixelShader->readOnlyResources[index];
+//            if(res.isTexture)
+//            {
+//              // Get all read-only resources directly
+//              rdcarray<UsedDescriptor> readOnlyResources = state.GetReadOnlyResources(ShaderStage::Pixel);
+//              
+//              // Find matching resource
+//              for(const UsedDescriptor &desc : readOnlyResources)
+//              {
+//                if(desc.access.index == index && desc.descriptor.resource != ResourceId())
+//                {
+//                  textureId = desc.descriptor.resource;
+//                  
+//                  // Find texture with matching ID in the list
+//                  for(const TextureDescription &tex : textures)
+//                  {
+//                    if(tex.resourceId == textureId)
+//                    {
+//                      uint64_t pixelCount = (uint64_t)tex.width * (uint64_t)tex.height;
+//                      if(pixelCount > maxPixelCount)
+//                      {
+//                        maxPixelCount = pixelCount;
+//                        maxTextureId = textureId;
+//                        texDesc = const_cast<TextureDescription *>(&tex);
+//                      }
+//                      break;
+//                    }
+//                  }
+//                }
+//              }
+//            }
+//          }
+//        }
+//
+//        // Now texDesc is properly initialized before being used
+//        if(texDesc)
+//        {
+//          texWidth = texDesc->width;
+//          texHeight = texDesc->height;
+//        }
+//        
+//        // Calculate texture space area
+//        float area = calculateTextureArea(uvs, texWidth, texHeight);
+//        totalTextureArea += area;
+//      }
+//      // 3D area calculation
+//      float area = calculateTriangleArea(positions);
+//      totalSurfaceArea += area;
+//      
+//    }
+//
+//    // Find related texture
+//    ResourceId textureId;
+//    float pixelDensity = 0.0f;
+//    if (totalSurfaceArea <= 0)
+//    {
+//      pixelDensity = 0;
+//    }
+//    else
+//    {
+//      pixelDensity = sqrtf(totalTextureArea / totalSurfaceArea);
+//    }
+//   
+//    //// Get fragment shader resources
+//    //const ShaderReflection *pixelShader = state.GetShaderReflection(ShaderStage::Pixel);
+//    //if(pixelShader)
+//    //{
+//    //  // Find texture type resources
+//    //  for(int i = 0; i < pixelShader->readOnlyResources.size(); i++)
+//    //  {
+//    //    const ShaderResource &res = pixelShader->readOnlyResources[i];
+//
+//    //    if(res.isTexture)
+//    //    {
+//    //      // Get all read-only resources directly
+//    //      rdcarray<UsedDescriptor> readOnlyResources = state.GetReadOnlyResources(ShaderStage::Pixel);
+//
+//    //      // Traverse to find bound resources matching the current resource index
+//    //      for(const UsedDescriptor &desc : readOnlyResources)
+//    //      {
+//    //        if(desc.access.index == i)
+//    //        {
+//    //          // Found related texture
+//    //          textureId = desc.descriptor.resource;
+//
+//    //          // Get texture information
+//    //          const rdcarray<TextureDescription> &textures = m_Ctx.GetTextures();
+//    //          TextureDescription *texDesc = nullptr;
+//
+//    //          // Find texture with matching ID in the list
+//    //          for(const TextureDescription &tex : textures)
+//    //          {
+//    //            if(tex.resourceId == textureId)
+//    //            {
+//    //              texDesc = const_cast<TextureDescription *>(&tex);
+//    //              break;
+//    //            }
+//    //          }
+//
+//    //          // Calculate pixel density
+//    //          if(texDesc && totalSurfaceArea > 0.0f)
+//    //          {
+//    //            uint64_t pixelCount = (uint64_t)texDesc->width * (uint64_t)texDesc->height;
+//    //            pixelDensity = sqrtf(float(pixelCount) / totalSurfaceArea);
+//    //          }
+//
+//    //          break;
+//    //        }
+//    //      }
+//
+//    //      if(textureId != ResourceId())
+//    //        break;
+//    //    }
+//    //  }
+//    //}
+//
+//    // Output to CSV
+//    QString meshName = m_Ctx.GetResourceName(vbufId);
+//    QString materialName = QStringLiteral("Unknown");    // Material name retrieval can be added here
+//    QString textureName = m_Ctx.GetResourceName(textureId);
+//
+//    QByteArray meshNameUtf8 = meshName.toUtf8();
+//    QByteArray materialNameUtf8 = materialName.toUtf8();
+//    QByteArray textureNameUtf8 = textureName.toUtf8();
+//    QByteArray eventNameUtf8 = QString(action->customName).toUtf8();
+//    QByteArray pathUtf8 = passPath.toUtf8();
+//
+//    // Use C-style string instead of QString
+//    QString line;
+//    line.sprintf("%u,%s,%u,%s,%u,%f,%f,%u,%s,%f\n", action->eventId,
+//                 pathUtf8.constData(),     // Include path in output
+//                 vbufId, meshNameUtf8.constData(), triangleCount, totalSurfaceArea,
+//                 totalTextureArea,
+//                 textureId, textureNameUtf8.constData(), pixelDensity);
+//
+//    out << line;
+//  };
+//
+//  // Function to recursively process all drawcalls
+//  std::function<void(IReplayController *, const rdcarray<ActionDescription> *, const QString&)> processActionList;
+//  processActionList = [&processDrawcall, &processActionList](
+//                          IReplayController *r, const rdcarray<ActionDescription> *actions, const QString& currentPath) {
+//    for(const ActionDescription &action : *actions)
+//    {
+//      // Create path for this action
+//      QString actionName = QString(action.customName);
+//      if(actionName.isEmpty())
+//        actionName = QStringLiteral("unnamed");
+//        
+//      QString newPath = currentPath;
+//      if(!newPath.isEmpty())
+//        newPath += QStringLiteral("/");
+//      newPath += actionName;
+//      
+//      // If this is an actual drawcall (not just a marker)
+//      if(action.flags & ActionFlags::Drawcall)
+//      {
+//        // Pass the path to processDrawcall
+//        processDrawcall(r, &action, newPath);
+//      }
+//      
+//      // Recursively process all children with the updated path
+//      if(!action.children.empty())
+//      {
+//        processActionList(r, &action.children, newPath);
+//      }
+//    }
+//  };
+//
+//  // Process all drawcalls
+//  m_Ctx.Replay().BlockInvoke(
+//      [&actions, &processActionList](IReplayController *r) { processActionList(r, &actions, QString()); });
+//
+//  file.close();
+//
+//  // Restore cursor
+//  QApplication::restoreOverrideCursor();
+//
+//  // Show completion message
+//  RDDialog::information(this, tr("Export Success"),
+//                        tr("Mesh surface area data has been exported to:\n%1").arg(filePath));
+//}
+
+//void TextureViewer::on_saveTexDensity_clicked()
+//{
+//  if(!m_Ctx.IsCaptureLoaded())
+//  {
+//    RDDialog::critical(this, tr("Error"), tr("No capture loaded"));
+//    return;
+//  }
+//
+//  QString fileName;
+//  fileName.sprintf("texDensity.csv");
+//  QString filePath = QFileDialog::getSaveFileName(this, tr("Save texture density data"),
+//                                                  QDir(QDir::currentPath()).filePath(fileName),
+//                                                  tr("CSV Files (*.csv)"));
+//
+//  if(filePath.isEmpty())
+//    return;
+//
+//  QFile file(filePath);
+//  if(!file.open(QIODevice::WriteOnly | QIODevice::Text))
+//  {
+//    RDDialog::critical(this, tr("Error"), tr("Cannot create file: %1").arg(file.errorString()));
+//    return;
+//  }
+//
+//  QTextStream out(&file);
+//
+//  // Write CSV header - 更新表头以更准确地反映列含义
+//  out << "Drawcall ID,Pass Path,Mesh ID,Mesh Name,Triangle Count,Surface Area(m^2),Texture "
+//         "Area(pixels^2),Related Texture ID,Related Texture Name,Pixel Density(pixels/m^2)\n";
+//
+//  // Show busy cursor
+//  QApplication::setOverrideCursor(QCursor(Qt::WaitCursor));
+//
+//  // For storing processed mesh IDs to avoid duplicate processing
+//  QMap<ResourceId, bool> processedMeshes;
+//
+//  // Get root actions
+//  const rdcarray<ActionDescription> &actions = m_Ctx.CurRootActions();
+//
+//  // Helper function to process a drawcall
+//  auto processDrawcall = [this, &out, &processedMeshes](IReplayController *r,
+//                                                        const ActionDescription *action,
+//                                                        const QString &passPath) {
+//    // Set current event
+//    r->SetFrameEvent(action->eventId, true);
+//
+//    // Get current pipeline state
+//    const PipeState &state = m_Ctx.CurPipelineState();
+//
+//    // Get vertex and index buffers
+//    rdcarray<BoundVBuffer> vbs = state.GetVBuffers();
+//    const BoundVBuffer &ib = state.GetIBuffer();
+//
+//    // Get vertex input attributes
+//    rdcarray<VertexInputAttribute> attrs = state.GetVertexInputs();
+//
+//    // Check if there is valid vertex data
+//    if(vbs.empty() || attrs.empty())
+//      return;
+//
+//    // Find position attribute
+//    int positionAttrIndex = -1;
+//    for(int i = 0; i < attrs.size(); i++)
+//    {
+//      if(attrs[i].name.contains("POSITION") || attrs[i].name.contains("Position"))
+//      {
+//        positionAttrIndex = i;
+//        break;
+//      }
+//    }
+//
+//    if(positionAttrIndex == -1)
+//      return;
+//
+//    // Get position attribute information
+//    const VertexInputAttribute &posAttr = attrs[positionAttrIndex];
+//    uint32_t vertexStride = vbs[posAttr.vertexBuffer].byteStride;
+//
+//    // Get vertex buffer ID
+//    ResourceId vbufId = vbs[posAttr.vertexBuffer].resourceId;
+//
+//    // Get index array
+//    rdcarray<uint32_t> indices;
+//    uint32_t numIndices = action->numIndices;
+//
+//    if(action->flags & ActionFlags::Indexed)
+//    {
+//      // For indexed drawing, get index buffer data
+//      bytebuf ibufData =
+//          r->GetBufferData(ib.resourceId, ib.byteOffset + action->indexOffset * ib.byteStride,
+//                           numIndices * ib.byteStride);
+//
+//      indices.resize(numIndices);
+//      // Parse indices based on index buffer type
+//      if(ib.byteStride == 2)    // 16-bit index
+//      {
+//        for(uint32_t i = 0; i < numIndices; i++)
+//        {
+//          uint16_t idx;
+//          memcpy(&idx, ibufData.data() + i * 2, sizeof(uint16_t));
+//          indices[i] = idx + action->baseVertex;
+//        }
+//      }
+//      else    // 32-bit index
+//      {
+//        for(uint32_t i = 0; i < numIndices; i++)
+//        {
+//          uint32_t idx;
+//          memcpy(&idx, ibufData.data() + i * 4, sizeof(uint32_t));
+//          indices[i] = idx + action->baseVertex;
+//        }
+//      }
+//    }
+//    else
+//    {
+//      // For non-indexed drawing, create sequential indices
+//      indices.resize(numIndices);
+//      for(uint32_t i = 0; i < numIndices; i++)
+//        indices[i] = i + action->vertexOffset;
+//    }
+//
+//    // Get vertex buffer data
+//    rdcarray<byte> vbufData = r->GetBufferData(vbufId, vbs[posAttr.vertexBuffer].byteOffset, 0);
+//
+//    // Find UV attribute
+//    int uvAttrIndex = -1;
+//    for(int i = 0; i < attrs.size(); i++)
+//    {
+//      if(attrs[i].name.contains("TEXCOORD") || attrs[i].name.contains("UV"))
+//      {
+//        uvAttrIndex = i;
+//        break;
+//      }
+//    }
+//
+//    // Find the largest texture used by this drawcall
+//    const ShaderReflection *pixelShader = state.GetShaderReflection(ShaderStage::Pixel);
+//    ResourceId textureId;
+//    uint32_t texWidth = 1;
+//    uint32_t texHeight = 1;
+//    TextureDescription *texDesc = nullptr;
+//    uint64_t maxPixelCount = 0;
+//
+//    if(pixelShader)
+//    {
+//      // Find texture type resources
+//      for(int i = 0; i < pixelShader->readOnlyResources.size(); i++)
+//      {
+//        const ShaderResource &res = pixelShader->readOnlyResources[i];
+//        if(res.isTexture)
+//        {
+//          // Get read-only resources for pixel shader
+//          rdcarray<UsedDescriptor> readOnlyResources = state.GetReadOnlyResources(ShaderStage::Pixel);
+//
+//          for(const UsedDescriptor &desc : readOnlyResources)
+//          {
+//            if(desc.access.index == i && desc.descriptor.resource != ResourceId())
+//            {
+//              ResourceId resId = desc.descriptor.resource;
+//
+//              // Get texture info
+//              for(const TextureDescription &tex : m_Ctx.GetTextures())
+//              {
+//                if(tex.resourceId == resId)
+//                {
+//                  uint64_t pixelCount = (uint64_t)tex.width * (uint64_t)tex.height;
+//                  if(pixelCount > maxPixelCount)
+//                  {
+//                    maxPixelCount = pixelCount;
+//                    textureId = resId;
+//                    texWidth = tex.width;
+//                    texHeight = tex.height;
+//                    texDesc = const_cast<TextureDescription *>(&tex);
+//                  }
+//                  break;
+//                }
+//              }
+//            }
+//          }
+//        }
+//      }
+//    }
+//
+//    // Calculate mesh surface area and triangle count
+//    float totalSurfaceArea = 0.0f;
+//    float totalTextureArea = 0.0f;
+//    uint32_t triangleCount = numIndices / 3;
+//
+//    // Process all triangles
+//    for(uint32_t i = 0; i < indices.size(); i += 3)
+//    {
+//      if(i + 2 >= indices.size())
+//        break;
+//
+//      // Store triangle vertex positions and UVs
+//      rdcarray<FloatVector> positions;
+//      positions.resize(3);
+//
+//      rdcarray<FloatVector> uvs;
+//      uvs.resize(3);
+//
+//      bool validTriangle = true;
+//      bool validUVs = uvAttrIndex != -1;
+//
+//      // Get position data for triangle
+//      for(int v = 0; v < 3; v++)
+//      {
+//        uint32_t idx = indices[i + v];
+//
+//        // Validate vertex buffer access
+//        if(vbufData.isEmpty() ||
+//           idx * vertexStride + posAttr.byteOffset + (sizeof(float) * 4) > vbufData.size())
+//        {
+//          validTriangle = false;
+//          break;
+//        }
+//
+//        const byte *vertex = vbufData.data() + idx * vertexStride;
+//
+//        // Read position data
+//        FloatVector pos = {};
+//        switch(posAttr.format.compCount)
+//        {
+//          case 4: memcpy(&pos, vertex + posAttr.byteOffset, sizeof(float) * 4); break;
+//          case 3:
+//            memcpy(&pos, vertex + posAttr.byteOffset, sizeof(float) * 3);
+//            pos.w = 1.0f;
+//            break;
+//          case 2:
+//            memcpy(&pos, vertex + posAttr.byteOffset, sizeof(float) * 2);
+//            pos.z = 0.0f;
+//            pos.w = 1.0f;
+//            break;
+//          default: validTriangle = false; break;
+//        }
+//
+//        positions[v] = pos;
+//
+//        // Read UV data if available
+//        if(validUVs)
+//        {
+//          const VertexInputAttribute &uvAttr = attrs[uvAttrIndex];
+//
+//          if(idx * vertexStride + uvAttr.byteOffset + (sizeof(float) * 4) > vbufData.size())
+//          {
+//            validUVs = false;
+//          }
+//          else
+//          {
+//            FloatVector uv = {};
+//            switch(uvAttr.format.compCount)
+//            {
+//              case 4: memcpy(&uv, vertex + uvAttr.byteOffset, sizeof(float) * 4); break;
+//              case 3:
+//                memcpy(&uv, vertex + uvAttr.byteOffset, sizeof(float) * 3);
+//                uv.w = 1.0f;
+//                break;
+//              case 2:
+//                memcpy(&uv, vertex + uvAttr.byteOffset, sizeof(float) * 2);
+//                uv.z = 0.0f;
+//                uv.w = 1.0f;
+//                break;
+//              default: validUVs = false; break;
+//            }
+//
+//            uvs[v] = uv;
+//          }
+//        }
+//      }
+//
+//      if(!validTriangle)
+//        continue;
+//
+//      // Calculate 3D surface area using Heron's formula
+//      float a = getLength(positions[0], positions[1]);
+//      float b = getLength(positions[0], positions[2]);
+//      float c = getLength(positions[1], positions[2]);
+//
+//      float s = (a + b + c) * 0.5f;
+//      float area = sqrtf(s * (s - a) * (s - b) * (s - c));
+//
+//      totalSurfaceArea += area;
+//
+//      // Calculate texture area if we have valid UVs and texture
+//      if(validUVs && texDesc)
+//      {
+//        // Convert UVs to pixel coordinates
+//        // Calculate triangle area in texture space
+//        float x1 = uvs[0].x;
+//        float y1 = uvs[0].y;
+//        float x2 = uvs[1].x;
+//        float y2 = uvs[1].y;
+//        float x3 = uvs[2].x;
+//        float y3 = uvs[2].y;
+//
+//        // Normalize UV coordinates (handle wrapping)
+//        x1 = fmod(x1, 1.0f);
+//        if(x1 < 0.0f)
+//          x1 += 1.0f;
+//        y1 = fmod(y1, 1.0f);
+//        if(y1 < 0.0f)
+//          y1 += 1.0f;
+//        x2 = fmod(x2, 1.0f);
+//        if(x2 < 0.0f)
+//          x2 += 1.0f;
+//        y2 = fmod(y2, 1.0f);
+//        if(y2 < 0.0f)
+//          y2 += 1.0f;
+//        x3 = fmod(x3, 1.0f);
+//        if(x3 < 0.0f)
+//          x3 += 1.0f;
+//        y3 = fmod(y3, 1.0f);
+//        if(y3 < 0.0f)
+//          y3 += 1.0f;
+//
+//        // Convert to pixel coordinates
+//        x1 *= texWidth;
+//        y1 *= texHeight;
+//        x2 *= texWidth;
+//        y2 *= texHeight;
+//        x3 *= texWidth;
+//        y3 *= texHeight;
+//
+//        // Calculate area using cross product formula
+//        float texArea = 0.5f * abs((x1 * (y2 - y3) + x2 * (y3 - y1) + x3 * (y1 - y2)));
+//        totalTextureArea += texArea;
+//      }
+//    }
+//
+//    // Calculate pixel density (pixels per meter)
+//    float pixelDensity = 0.0f;
+//    if(totalSurfaceArea > 0.0f)
+//    {
+//      pixelDensity = sqrt(totalTextureArea / totalSurfaceArea);
+//    }
+//
+//    // Output to CSV
+//    QString meshName = m_Ctx.GetResourceName(vbufId);
+//    QString textureName = m_Ctx.GetResourceName(textureId);
+//
+//    QByteArray meshNameUtf8 = meshName.toUtf8();
+//    QByteArray textureNameUtf8 = textureName.toUtf8();
+//    QByteArray pathUtf8 = passPath.toUtf8();
+//
+//    QString line;
+//    line.sprintf("%u,%s,%u,%s,%u,%f,%f,%u,%s,%f\n", action->eventId, pathUtf8.constData(), vbufId,
+//                 meshNameUtf8.constData(), triangleCount, totalSurfaceArea, totalTextureArea,
+//                 textureId, textureNameUtf8.constData(), pixelDensity);
+//
+//    out << line;
+//  };
+//
+//  // Function to recursively process all drawcalls
+//  std::function<void(IReplayController *, const rdcarray<ActionDescription> *, const QString &)>
+//      processActionList;
+//  processActionList = [&processDrawcall, &processActionList](
+//                          IReplayController *r, const rdcarray<ActionDescription> *actions,
+//                          const QString &currentPath) {
+//    for(const ActionDescription &action : *actions)
+//    {
+//      // Create path for this action
+//      QString actionName = QString(action.customName);
+//      if(actionName.isEmpty())
+//        actionName = QStringLiteral("unnamed");
+//
+//      QString newPath = currentPath;
+//      if(!newPath.isEmpty())
+//        newPath += QStringLiteral("/");
+//      newPath += actionName;
+//
+//      // If this is an actual drawcall (not just a marker)
+//      if(action.flags & ActionFlags::Drawcall)
+//      {
+//        // Process this drawcall
+//        processDrawcall(r, &action, newPath);
+//      }
+//
+//      // Recursively process all children
+//      if(!action.children.empty())
+//      {
+//        processActionList(r, &action.children, newPath);
+//      }
+//    }
+//  };
+//
+//  // Process all drawcalls
+//  m_Ctx.Replay().BlockInvoke([&actions, &processActionList](IReplayController *r) {
+//    processActionList(r, &actions, QString());
+//  });
+//
+//  file.close();
+//
+//  // Restore cursor
+//  QApplication::restoreOverrideCursor();
+//
+//  // Show completion message
+//  RDDialog::information(this, tr("Export Success"),
+//                        tr("Mesh surface area data has been exported to:\n%1").arg(filePath));
+//}
+
 void TextureViewer::on_saveTexDensity_clicked()
 {
   if(!m_Ctx.IsCaptureLoaded())
@@ -4210,9 +5032,9 @@ void TextureViewer::on_saveTexDensity_clicked()
 
   QString fileName;
   fileName.sprintf("texDensity.csv");
-  QString filePath = QFileDialog::getSaveFileName(
-      this, tr("Save texture density data"), QDir(QDir::currentPath()).filePath(fileName),
-      tr("CSV Files (*.csv)"));
+  QString filePath = QFileDialog::getSaveFileName(this, tr("Save texture density data"),
+                                                  QDir(QDir::currentPath()).filePath(fileName),
+                                                  tr("CSV Files (*.csv)"));
 
   if(filePath.isEmpty())
     return;
@@ -4226,40 +5048,41 @@ void TextureViewer::on_saveTexDensity_clicked()
 
   QTextStream out(&file);
 
-  // Write CSV header
-  out << "Drawcall ID,Pass Path,Mesh ID,Mesh Name,Triangle Count,Surface Area(m^2),Related Texture ID,Related Texture Name,Pixel Density(PPM)\n";
+  // 修改CSV表头，使其与计算方法一致
+  out << "Drawcall ID,Pass Path,Mesh ID,Mesh Name,Triangle Count,Surface Area(m^2),Texture "
+         "Area(pixels^2),Related Texture ID,Related Texture Name,Pixel Density(pixels/m^2)\n";
 
-  // Show busy cursor
+  // 显示忙碌光标
   QApplication::setOverrideCursor(QCursor(Qt::WaitCursor));
 
-  // For storing processed mesh IDs to avoid duplicate processing
+  // 存储已处理的网格ID，避免重复处理
   QMap<ResourceId, bool> processedMeshes;
 
-  // Get root actions
+  // 获取根操作
   const rdcarray<ActionDescription> &actions = m_Ctx.CurRootActions();
 
-  // Helper function to process a drawcall
+  // 处理单个绘制调用的辅助函数
   auto processDrawcall = [this, &out, &processedMeshes](IReplayController *r,
                                                         const ActionDescription *action,
                                                         const QString &passPath) {
-    // Set current event
+    // 设置当前事件
     r->SetFrameEvent(action->eventId, true);
 
-    // Get current pipeline state
+    // 获取当前管线状态
     const PipeState &state = m_Ctx.CurPipelineState();
 
-    // Get vertex and index buffers
+    // 获取顶点和索引缓冲区
     rdcarray<BoundVBuffer> vbs = state.GetVBuffers();
     const BoundVBuffer &ib = state.GetIBuffer();
 
-    // Get vertex input attributes
+    // 获取顶点输入属性
     rdcarray<VertexInputAttribute> attrs = state.GetVertexInputs();
 
-    // Check if there is valid vertex data
+    // 检查是否有有效的顶点数据
     if(vbs.empty() || attrs.empty())
       return;
 
-    // Find position attribute
+    // 查找位置属性
     int positionAttrIndex = -1;
     for(int i = 0; i < attrs.size(); i++)
     {
@@ -4273,27 +5096,27 @@ void TextureViewer::on_saveTexDensity_clicked()
     if(positionAttrIndex == -1)
       return;
 
-    // Get position attribute information
+    // 获取位置属性信息
     const VertexInputAttribute &posAttr = attrs[positionAttrIndex];
     uint32_t vertexStride = vbs[posAttr.vertexBuffer].byteStride;
 
-    // Check if the vertex buffer has been processed
+    // 获取顶点缓冲区ID
     ResourceId vbufId = vbs[posAttr.vertexBuffer].resourceId;
 
-    // Get index array
+    // 获取索引数组
     rdcarray<uint32_t> indices;
     uint32_t numIndices = action->numIndices;
 
     if(action->flags & ActionFlags::Indexed)
     {
-      // For indexed drawing, get index buffer data
+      // 对于索引绘制，获取索引缓冲区数据
       bytebuf ibufData =
           r->GetBufferData(ib.resourceId, ib.byteOffset + action->indexOffset * ib.byteStride,
                            numIndices * ib.byteStride);
 
       indices.resize(numIndices);
-      // Parse indices based on index buffer type
-      if(ib.byteStride == 2)    // 16-bit index
+      // 基于索引缓冲区类型解析索引
+      if(ib.byteStride == 2)    // 16位索引
       {
         for(uint32_t i = 0; i < numIndices; i++)
         {
@@ -4302,7 +5125,7 @@ void TextureViewer::on_saveTexDensity_clicked()
           indices[i] = idx + action->baseVertex;
         }
       }
-      else    // 32-bit index
+      else    // 32位索引
       {
         for(uint32_t i = 0; i < numIndices; i++)
         {
@@ -4314,274 +5137,273 @@ void TextureViewer::on_saveTexDensity_clicked()
     }
     else
     {
-      // For non-indexed drawing, create sequential indices
+      // 对于非索引绘制，创建顺序索引
       indices.resize(numIndices);
       for(uint32_t i = 0; i < numIndices; i++)
         indices[i] = i + action->vertexOffset;
     }
 
-    // Get vertex buffer data
+    // 获取顶点缓冲区数据
     rdcarray<byte> vbufData = r->GetBufferData(vbufId, vbs[posAttr.vertexBuffer].byteOffset, 0);
 
-    // Calculate mesh surface area and triangle count
+    // 查找UV属性
+    int uvAttrIndex = -1;
+    for(int i = 0; i < attrs.size(); i++)
+    {
+      if(attrs[i].name.contains("TEXCOORD") || attrs[i].name.contains("UV"))
+      {
+        uvAttrIndex = i;
+        break;
+      }
+    }
+
+    // 查找此绘制调用使用的最大纹理
+    const ShaderReflection *pixelShader = state.GetShaderReflection(ShaderStage::Pixel);
+    ResourceId textureId;
+    uint32_t texWidth = 1;
+    uint32_t texHeight = 1;
+    TextureDescription *texDesc = nullptr;
+    uint64_t maxPixelCount = 0;
+
+    if(pixelShader)
+    {
+      // 查找纹理类型资源
+      for(int i = 0; i < pixelShader->readOnlyResources.size(); i++)
+      {
+        const ShaderResource &res = pixelShader->readOnlyResources[i];
+        if(res.isTexture)
+        {
+          // 获取像素着色器的只读资源
+          rdcarray<UsedDescriptor> readOnlyResources = state.GetReadOnlyResources(ShaderStage::Pixel);
+
+          for(const UsedDescriptor &desc : readOnlyResources)
+          {
+            if(desc.access.index == i && desc.descriptor.resource != ResourceId())
+            {
+              ResourceId resId = desc.descriptor.resource;
+
+              // 获取纹理信息
+              for(const TextureDescription &tex : m_Ctx.GetTextures())
+              {
+                if(tex.resourceId == resId)
+                {
+                  uint64_t pixelCount = (uint64_t)tex.width * (uint64_t)tex.height;
+                  if(pixelCount > maxPixelCount)
+                  {
+                    maxPixelCount = pixelCount;
+                    textureId = resId;
+                    texWidth = tex.width;
+                    texHeight = tex.height;
+                    texDesc = const_cast<TextureDescription *>(&tex);
+                  }
+                  break;
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+
+    // 计算网格表面积和三角形数量
     float totalSurfaceArea = 0.0f;
+    float totalTextureArea = 0.0f;
     uint32_t triangleCount = numIndices / 3;
 
-    // Process all triangles
+    // 处理所有三角形
     for(uint32_t i = 0; i < indices.size(); i += 3)
     {
       if(i + 2 >= indices.size())
         break;
 
-      // Store triangle vertex positions
+      // 存储三角形顶点位置和UV
       rdcarray<FloatVector> positions;
       positions.resize(3);
 
-      for(int v = 0; v < 3; v++)
-      {
-        uint32_t idx = indices[i + v];
-        const byte *vertex = vbufData.data() + idx * vertexStride;
-
-        // Read position data based on attribute format
-        {
-          FloatVector pos;
-
-          // Process different component counts
-          switch(posAttr.format.compCount)
-          {
-            case 4: memcpy(&pos, vertex + posAttr.byteOffset, sizeof(float) * 4); break;
-            case 3:
-              memcpy(&pos, vertex + posAttr.byteOffset, sizeof(float) * 3);
-              pos.w = 1.0f;
-              break;
-            case 2:
-              memcpy(&pos, vertex + posAttr.byteOffset, sizeof(float) * 2);
-              pos.z = 0.0f;
-              pos.w = 1.0f;
-              break;
-            default: break;
-          }
-
-          positions[v] = pos;
-        }
-      }
-
-      // Get UV information from the mesh
       rdcarray<FloatVector> uvs;
       uvs.resize(3);
 
-      // Find UV attribute in the vertex data
-      int uvAttrIndex = -1;
-      for(int j = 0; j < attrs.size(); j++)
+      bool validTriangle = true;
+      bool validUVs = uvAttrIndex != -1;
+
+      // 获取三角形位置数据
+      for(int v = 0; v < 3; v++)
       {
-        if(attrs[j].name.contains("TEXCOORD") || attrs[j].name.contains("UV"))
+        uint32_t idx = indices[i + v];
+
+        // 验证顶点缓冲区访问
+        if(vbufData.isEmpty() ||
+           idx * vertexStride + posAttr.byteOffset + (sizeof(float) * 4) > vbufData.size())
         {
-          uvAttrIndex = j;
+          validTriangle = false;
           break;
         }
-      }
 
-      if(uvAttrIndex != -1)
-      {
-        const VertexInputAttribute &uvAttr = attrs[uvAttrIndex];
-        
-        // Extract UV coordinates for the three vertices
-        for(int v = 0; v < 3; v++)
+        const byte *vertex = vbufData.data() + idx * vertexStride;
+
+        // 读取位置数据
+        FloatVector pos = {};
+        switch(posAttr.format.compCount)
         {
-          uint32_t idx = indices[i + v];
-          const byte *vertex = vbufData.data() + idx * vertexStride;
-          
-          // Read UV data based on attribute format
-          switch(uvAttr.format.compCount)
-          {
-            case 4: memcpy(&uvs[v], vertex + uvAttr.byteOffset, sizeof(float) * 4); break;
-            case 3:
-              memcpy(&uvs[v], vertex + uvAttr.byteOffset, sizeof(float) * 3);
-              uvs[v].w = 1.0f;
-              break;
-            case 2:
-              memcpy(&uvs[v], vertex + uvAttr.byteOffset, sizeof(float) * 2);
-              uvs[v].z = 0.0f;
-              uvs[v].w = 1.0f;
-              break;
-            default: break;
-          }
-        }
-        
-        // Find the texture dimensions for this material
-        uint32_t texWidth = 1;
-        uint32_t texHeight = 1;
-        TextureDescription *texDesc = nullptr;
-
-        // Find the texture dimensions by resourceId
-        ResourceId textureId;
-        // Try to find the maximum texture from all bound resources
-        const rdcarray<TextureDescription> &textures = m_Ctx.GetTextures();
-        ResourceId maxTextureId;
-        uint64_t maxPixelCount = 0;
-
-        // Get fragment shader resources
-        const ShaderReflection *pixelShader = state.GetShaderReflection(ShaderStage::Pixel);
-        if(pixelShader)
-        {
-          // Find texture type resources
-          for(int index = 0; index < pixelShader->readOnlyResources.size(); index++)
-          {
-            const ShaderResource &res = pixelShader->readOnlyResources[index];
-            if(res.isTexture)
-            {
-              // Get all read-only resources directly
-              rdcarray<UsedDescriptor> readOnlyResources = state.GetReadOnlyResources(ShaderStage::Pixel);
-              
-              // Find matching resource
-              for(const UsedDescriptor &desc : readOnlyResources)
-              {
-                if(desc.access.index == index && desc.descriptor.resource != ResourceId())
-                {
-                  textureId = desc.descriptor.resource;
-                  
-                  // Find texture with matching ID in the list
-                  for(const TextureDescription &tex : textures)
-                  {
-                    if(tex.resourceId == textureId)
-                    {
-                      uint64_t pixelCount = (uint64_t)tex.width * (uint64_t)tex.height;
-                      if(pixelCount > maxPixelCount)
-                      {
-                        maxPixelCount = pixelCount;
-                        maxTextureId = textureId;
-                        texDesc = const_cast<TextureDescription *>(&tex);
-                      }
-                      break;
-                    }
-                  }
-                }
-              }
-            }
-          }
-        }
-
-        // Now texDesc is properly initialized before being used
-        if(texDesc)
-        {
-          texWidth = texDesc->width;
-          texHeight = texDesc->height;
-        }
-        
-        // Calculate texture space area
-        float area = calculateTextureArea(uvs, texWidth, texHeight);
-        totalSurfaceArea += area;
-      }
-      else
-      {
-        // Fallback to 3D area calculation if UV data is not available
-        float area = calculateTriangleArea(positions);
-        totalSurfaceArea += area;
-      }
-    }
-
-    // Find related texture
-    ResourceId textureId;
-    float pixelDensity = 0.0f;
-
-    // Get fragment shader resources
-    const ShaderReflection *pixelShader = state.GetShaderReflection(ShaderStage::Pixel);
-    if(pixelShader)
-    {
-      // Find texture type resources
-      for(int i = 0; i < pixelShader->readOnlyResources.size(); i++)
-      {
-        const ShaderResource &res = pixelShader->readOnlyResources[i];
-
-        if(res.isTexture)
-        {
-          // Get all read-only resources directly
-          rdcarray<UsedDescriptor> readOnlyResources = state.GetReadOnlyResources(ShaderStage::Pixel);
-
-          // Traverse to find bound resources matching the current resource index
-          for(const UsedDescriptor &desc : readOnlyResources)
-          {
-            if(desc.access.index == i)
-            {
-              // Found related texture
-              textureId = desc.descriptor.resource;
-
-              // Get texture information
-              const rdcarray<TextureDescription> &textures = m_Ctx.GetTextures();
-              TextureDescription *texDesc = nullptr;
-
-              // Find texture with matching ID in the list
-              for(const TextureDescription &tex : textures)
-              {
-                if(tex.resourceId == textureId)
-                {
-                  texDesc = const_cast<TextureDescription *>(&tex);
-                  break;
-                }
-              }
-
-              // Calculate pixel density
-              if(texDesc && totalSurfaceArea > 0.0f)
-              {
-                uint64_t pixelCount = (uint64_t)texDesc->width * (uint64_t)texDesc->height;
-                pixelDensity = sqrtf(float(pixelCount) / totalSurfaceArea);
-              }
-
-              break;
-            }
-          }
-
-          if(textureId != ResourceId())
+          case 4: memcpy(&pos, vertex + posAttr.byteOffset, sizeof(float) * 4); break;
+          case 3:
+            memcpy(&pos, vertex + posAttr.byteOffset, sizeof(float) * 3);
+            pos.w = 1.0f;
             break;
+          case 2:
+            memcpy(&pos, vertex + posAttr.byteOffset, sizeof(float) * 2);
+            pos.z = 0.0f;
+            pos.w = 1.0f;
+            break;
+          default: validTriangle = false; break;
         }
+
+        positions[v] = pos;
+
+        // 读取UV数据
+        if(validUVs)
+        {
+          const VertexInputAttribute &uvAttr = attrs[uvAttrIndex];
+
+          if(idx * vertexStride + uvAttr.byteOffset + (sizeof(float) * 4) > vbufData.size())
+          {
+            validUVs = false;
+          }
+          else
+          {
+            FloatVector uv = {};
+            switch(uvAttr.format.compCount)
+            {
+              case 4: memcpy(&uv, vertex + uvAttr.byteOffset, sizeof(float) * 4); break;
+              case 3:
+                memcpy(&uv, vertex + uvAttr.byteOffset, sizeof(float) * 3);
+                uv.w = 1.0f;
+                break;
+              case 2:
+                memcpy(&uv, vertex + uvAttr.byteOffset, sizeof(float) * 2);
+                uv.z = 0.0f;
+                uv.w = 1.0f;
+                break;
+              default: validUVs = false; break;
+            }
+
+            uvs[v] = uv;
+          }
+        }
+      }
+
+      if(!validTriangle)
+        continue;
+
+      // 使用Heron公式计算3D表面积
+      float a = getLength(positions[0], positions[1]);
+      float b = getLength(positions[0], positions[2]);
+      float c = getLength(positions[1], positions[2]);
+
+      float s = (a + b + c) * 0.5f;
+      float area = sqrtf(s * (s - a) * (s - b) * (s - c));
+
+      totalSurfaceArea += area;
+
+      // 如果有有效UV和纹理，计算纹理空间面积
+      if(validUVs && texDesc)
+      {
+        // 将UV坐标转换为像素坐标并计算纹理空间三角形面积
+        float x1 = uvs[0].x;
+        float y1 = uvs[0].y;
+        float x2 = uvs[1].x;
+        float y2 = uvs[1].y;
+        float x3 = uvs[2].x;
+        float y3 = uvs[2].y;
+
+        // 规范化UV坐标（处理包装）
+        x1 = fmod(x1, 1.0f);
+        if(x1 < 0.0f)
+          x1 += 1.0f;
+        y1 = fmod(y1, 1.0f);
+        if(y1 < 0.0f)
+          y1 += 1.0f;
+        x2 = fmod(x2, 1.0f);
+        if(x2 < 0.0f)
+          x2 += 1.0f;
+        y2 = fmod(y2, 1.0f);
+        if(y2 < 0.0f)
+          y2 += 1.0f;
+        x3 = fmod(x3, 1.0f);
+        if(x3 < 0.0f)
+          x3 += 1.0f;
+        y3 = fmod(y3, 1.0f);
+        if(y3 < 0.0f)
+          y3 += 1.0f;
+
+        // 转换为像素坐标
+        x1 *= texWidth;
+        y1 *= texHeight;
+        x2 *= texWidth;
+        y2 *= texHeight;
+        x3 *= texWidth;
+        y3 *= texHeight;
+
+        // 使用叉积公式计算面积
+        float texArea = 0.5f * abs((x1 * (y2 - y3) + x2 * (y3 - y1) + x3 * (y1 - y2)));
+        totalTextureArea += texArea;
       }
     }
 
-    // Output to CSV
+    // 计算像素密度 - 参考model_ppm.cpp中的计算方法
+    float pixelDensity = 0.0f;
+    if(totalSurfaceArea > 0.0f && totalTextureArea > 0.0f)
+    {
+      // 与model_ppm.cpp保持一致，取sqrt(纹理面积/3D面积)
+      pixelDensity = sqrt(totalTextureArea / totalSurfaceArea);
+    }
+
+    // 输出到CSV - 移除pathUtf8
     QString meshName = m_Ctx.GetResourceName(vbufId);
-    QString materialName = QStringLiteral("Unknown");    // Material name retrieval can be added here
     QString textureName = m_Ctx.GetResourceName(textureId);
 
     QByteArray meshNameUtf8 = meshName.toUtf8();
-    QByteArray materialNameUtf8 = materialName.toUtf8();
     QByteArray textureNameUtf8 = textureName.toUtf8();
-    QByteArray eventNameUtf8 = QString(action->customName).toUtf8();
-    QByteArray pathUtf8 = passPath.toUtf8();
 
-    // Use C-style string instead of QString
     QString line;
-    line.sprintf("%u,%s,%u,%s,%u,%f,%u,%s,%f\n", action->eventId,
-                 pathUtf8.constData(),     // Include path in output
-                 vbufId, meshNameUtf8.constData(), triangleCount, totalSurfaceArea,
+    QString sanitizedPath = passPath;
+    std::string stdString = sanitizedPath.toStdString();
+    stdString.erase(std::remove(stdString.begin(), stdString.end(), ','), stdString.end());
+    sanitizedPath = QString::fromStdString(stdString);
+    line.sprintf("%u,%s,%u,%s,%u,%f,%f,%u,%s,%f\n", action->eventId, qPrintable(sanitizedPath),
+                 vbufId,
+                 meshNameUtf8.constData(), triangleCount, totalSurfaceArea, totalTextureArea,
                  textureId, textureNameUtf8.constData(), pixelDensity);
 
     out << line;
   };
 
-  // Function to recursively process all drawcalls
-  std::function<void(IReplayController *, const rdcarray<ActionDescription> *, const QString&)> processActionList;
+  // 递归处理所有绘制调用的函数
+  std::function<void(IReplayController *, const rdcarray<ActionDescription> *, const QString &)>
+      processActionList;
   processActionList = [&processDrawcall, &processActionList](
-                          IReplayController *r, const rdcarray<ActionDescription> *actions, const QString& currentPath) {
+                          IReplayController *r, const rdcarray<ActionDescription> *actions,
+                          const QString &currentPath) {
     for(const ActionDescription &action : *actions)
     {
-      // Create path for this action
+      // 为此操作创建路径
       QString actionName = QString(action.customName);
       if(actionName.isEmpty())
         actionName = QStringLiteral("unnamed");
-        
+
       QString newPath = currentPath;
       if(!newPath.isEmpty())
         newPath += QStringLiteral("/");
       newPath += actionName;
-      
-      // If this is an actual drawcall (not just a marker)
+
+      // 如果这是一个实际的绘制调用（不仅仅是标记）
       if(action.flags & ActionFlags::Drawcall)
       {
-        // Pass the path to processDrawcall
+        // 处理此绘制调用
         processDrawcall(r, &action, newPath);
       }
-      
-      // Recursively process all children with the updated path
+
+      // 递归处理所有子项
       if(!action.children.empty())
       {
         processActionList(r, &action.children, newPath);
@@ -4589,16 +5411,17 @@ void TextureViewer::on_saveTexDensity_clicked()
     }
   };
 
-  // Process all drawcalls
-  m_Ctx.Replay().BlockInvoke(
-      [&actions, &processActionList](IReplayController *r) { processActionList(r, &actions, QString()); });
+  // 处理所有绘制调用
+  m_Ctx.Replay().BlockInvoke([&actions, &processActionList](IReplayController *r) {
+    processActionList(r, &actions, QString());
+  });
 
   file.close();
 
-  // Restore cursor
+  // 恢复光标
   QApplication::restoreOverrideCursor();
 
-  // Show completion message
+  // 显示完成消息
   RDDialog::information(this, tr("Export Success"),
                         tr("Mesh surface area data has been exported to:\n%1").arg(filePath));
 }

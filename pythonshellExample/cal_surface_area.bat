@@ -1,0 +1,1 @@
+python cal_surface_area.py --file_path=C:\Users\lixiaoxi1\Desktop\Sea_Space\github\renderdocmine\pythonshellExample\modelTest1.obj
