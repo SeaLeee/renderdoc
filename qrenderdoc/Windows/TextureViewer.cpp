@@ -5022,6 +5022,410 @@ float calculateTextureArea(const rdcarray<FloatVector> &uvs, uint32_t texWidth, 
 //                        tr("Mesh surface area data has been exported to:\n%1").arg(filePath));
 //}
 
+//void TextureViewer::on_saveTexDensity_clicked()
+//{
+//  if(!m_Ctx.IsCaptureLoaded())
+//  {
+//    RDDialog::critical(this, tr("Error"), tr("No capture loaded"));
+//    return;
+//  }
+//
+//  QString fileName;
+//  fileName.sprintf("texDensity.csv");
+//  QString filePath = QFileDialog::getSaveFileName(this, tr("Save texture density data"),
+//                                                  QDir(QDir::currentPath()).filePath(fileName),
+//                                                  tr("CSV Files (*.csv)"));
+//
+//  if(filePath.isEmpty())
+//    return;
+//
+//  QFile file(filePath);
+//  if(!file.open(QIODevice::WriteOnly | QIODevice::Text))
+//  {
+//    RDDialog::critical(this, tr("Error"), tr("Cannot create file: %1").arg(file.errorString()));
+//    return;
+//  }
+//
+//  QTextStream out(&file);
+//
+//  // 修改CSV表头，使其与计算方法一致
+//  out << "Drawcall ID,Pass Path,Mesh ID,Mesh Name,Triangle Count,Surface Area(m^2),Texture "
+//         "Area(pixels^2),Related Texture ID,Related Texture Name,Pixel Density(pixels/m^2)\n";
+//
+//  // 显示忙碌光标
+//  QApplication::setOverrideCursor(QCursor(Qt::WaitCursor));
+//
+//  // 存储已处理的网格ID，避免重复处理
+//  QMap<ResourceId, bool> processedMeshes;
+//
+//  // 获取根操作
+//  const rdcarray<ActionDescription> &actions = m_Ctx.CurRootActions();
+//
+//  // 处理单个绘制调用的辅助函数
+//  auto processDrawcall = [this, &out, &processedMeshes](IReplayController *r,
+//                                                        const ActionDescription *action,
+//                                                        const QString &passPath) {
+//    // 设置当前事件
+//    r->SetFrameEvent(action->eventId, true);
+//
+//    // 获取当前管线状态
+//    const PipeState &state = m_Ctx.CurPipelineState();
+//
+//    // 获取顶点和索引缓冲区
+//    rdcarray<BoundVBuffer> vbs = state.GetVBuffers();
+//    const BoundVBuffer &ib = state.GetIBuffer();
+//
+//    // 获取顶点输入属性
+//    rdcarray<VertexInputAttribute> attrs = state.GetVertexInputs();
+//
+//    // 检查是否有有效的顶点数据
+//    if(vbs.empty() || attrs.empty())
+//      return;
+//
+//    // 查找位置属性
+//    int positionAttrIndex = -1;
+//    for(int i = 0; i < attrs.size(); i++)
+//    {
+//      if(attrs[i].name.contains("POSITION") || attrs[i].name.contains("Position"))
+//      {
+//        positionAttrIndex = i;
+//        break;
+//      }
+//    }
+//
+//    if(positionAttrIndex == -1)
+//      return;
+//
+//    // 获取位置属性信息
+//    const VertexInputAttribute &posAttr = attrs[positionAttrIndex];
+//    uint32_t vertexStride = vbs[posAttr.vertexBuffer].byteStride;
+//
+//    // 获取顶点缓冲区ID
+//    ResourceId vbufId = vbs[posAttr.vertexBuffer].resourceId;
+//
+//    // 获取索引数组
+//    rdcarray<uint32_t> indices;
+//    uint32_t numIndices = action->numIndices;
+//
+//    if(action->flags & ActionFlags::Indexed)
+//    {
+//      // 对于索引绘制，获取索引缓冲区数据
+//      bytebuf ibufData =
+//          r->GetBufferData(ib.resourceId, ib.byteOffset + action->indexOffset * ib.byteStride,
+//                           numIndices * ib.byteStride);
+//
+//      indices.resize(numIndices);
+//      // 基于索引缓冲区类型解析索引
+//      if(ib.byteStride == 2)    // 16位索引
+//      {
+//        for(uint32_t i = 0; i < numIndices; i++)
+//        {
+//          uint16_t idx;
+//          memcpy(&idx, ibufData.data() + i * 2, sizeof(uint16_t));
+//          indices[i] = idx + action->baseVertex;
+//        }
+//      }
+//      else    // 32位索引
+//      {
+//        for(uint32_t i = 0; i < numIndices; i++)
+//        {
+//          uint32_t idx;
+//          memcpy(&idx, ibufData.data() + i * 4, sizeof(uint32_t));
+//          indices[i] = idx + action->baseVertex;
+//        }
+//      }
+//    }
+//    else
+//    {
+//      // 对于非索引绘制，创建顺序索引
+//      indices.resize(numIndices);
+//      for(uint32_t i = 0; i < numIndices; i++)
+//        indices[i] = i + action->vertexOffset;
+//    }
+//
+//    // 获取顶点缓冲区数据
+//    rdcarray<byte> vbufData = r->GetBufferData(vbufId, vbs[posAttr.vertexBuffer].byteOffset, 0);
+//
+//    // 查找UV属性
+//    int uvAttrIndex = -1;
+//    for(int i = 0; i < attrs.size(); i++)
+//    {
+//      if(attrs[i].name.contains("TEXCOORD") || attrs[i].name.contains("UV"))
+//      {
+//        uvAttrIndex = i;
+//        break;
+//      }
+//    }
+//
+//    // 查找此绘制调用使用的最大纹理
+//    const ShaderReflection *pixelShader = state.GetShaderReflection(ShaderStage::Pixel);
+//    ResourceId textureId;
+//    uint32_t texWidth = 1;
+//    uint32_t texHeight = 1;
+//    TextureDescription *texDesc = nullptr;
+//    uint64_t maxPixelCount = 0;
+//
+//    if(pixelShader)
+//    {
+//      // 查找纹理类型资源
+//      for(int i = 0; i < pixelShader->readOnlyResources.size(); i++)
+//      {
+//        const ShaderResource &res = pixelShader->readOnlyResources[i];
+//        if(res.isTexture)
+//        {
+//          // 获取像素着色器的只读资源
+//          rdcarray<UsedDescriptor> readOnlyResources = state.GetReadOnlyResources(ShaderStage::Pixel);
+//
+//          for(const UsedDescriptor &desc : readOnlyResources)
+//          {
+//            if(desc.access.index == i && desc.descriptor.resource != ResourceId())
+//            {
+//              ResourceId resId = desc.descriptor.resource;
+//
+//              // 获取纹理信息
+//              for(const TextureDescription &tex : m_Ctx.GetTextures())
+//              {
+//                if(tex.resourceId == resId)
+//                {
+//                  uint64_t pixelCount = (uint64_t)tex.width * (uint64_t)tex.height;
+//                  if(pixelCount > maxPixelCount)
+//                  {
+//                    maxPixelCount = pixelCount;
+//                    textureId = resId;
+//                    texWidth = tex.width;
+//                    texHeight = tex.height;
+//                    texDesc = const_cast<TextureDescription *>(&tex);
+//                  }
+//                  break;
+//                }
+//              }
+//            }
+//          }
+//        }
+//      }
+//    }
+//
+//    // 计算网格表面积和三角形数量
+//    float totalSurfaceArea = 0.0f;
+//    float totalTextureArea = 0.0f;
+//    uint32_t triangleCount = numIndices / 3;
+//
+//    // 处理所有三角形
+//    for(uint32_t i = 0; i < indices.size(); i += 3)
+//    {
+//      if(i + 2 >= indices.size())
+//        break;
+//
+//      // 存储三角形顶点位置和UV
+//      rdcarray<FloatVector> positions;
+//      positions.resize(3);
+//
+//      rdcarray<FloatVector> uvs;
+//      uvs.resize(3);
+//
+//      bool validTriangle = true;
+//      bool validUVs = uvAttrIndex != -1;
+//
+//      // 获取三角形位置数据
+//      for(int v = 0; v < 3; v++)
+//      {
+//        uint32_t idx = indices[i + v];
+//
+//        // 验证顶点缓冲区访问
+//        if(vbufData.isEmpty() ||
+//           idx * vertexStride + posAttr.byteOffset + (sizeof(float) * 4) > vbufData.size())
+//        {
+//          validTriangle = false;
+//          break;
+//        }
+//
+//        const byte *vertex = vbufData.data() + idx * vertexStride;
+//
+//        // 读取位置数据
+//        FloatVector pos = {};
+//        switch(posAttr.format.compCount)
+//        {
+//          case 4: memcpy(&pos, vertex + posAttr.byteOffset, sizeof(float) * 4); break;
+//          case 3:
+//            memcpy(&pos, vertex + posAttr.byteOffset, sizeof(float) * 3);
+//            pos.w = 1.0f;
+//            break;
+//          case 2:
+//            memcpy(&pos, vertex + posAttr.byteOffset, sizeof(float) * 2);
+//            pos.z = 0.0f;
+//            pos.w = 1.0f;
+//            break;
+//          default: validTriangle = false; break;
+//        }
+//
+//        positions[v] = pos;
+//
+//        // 读取UV数据
+//        if(validUVs)
+//        {
+//          const VertexInputAttribute &uvAttr = attrs[uvAttrIndex];
+//
+//          if(idx * vertexStride + uvAttr.byteOffset + (sizeof(float) * 4) > vbufData.size())
+//          {
+//            validUVs = false;
+//          }
+//          else
+//          {
+//            FloatVector uv = {};
+//            switch(uvAttr.format.compCount)
+//            {
+//              case 4: memcpy(&uv, vertex + uvAttr.byteOffset, sizeof(float) * 4); break;
+//              case 3:
+//                memcpy(&uv, vertex + uvAttr.byteOffset, sizeof(float) * 3);
+//                uv.w = 1.0f;
+//                break;
+//              case 2:
+//                memcpy(&uv, vertex + uvAttr.byteOffset, sizeof(float) * 2);
+//                uv.z = 0.0f;
+//                uv.w = 1.0f;
+//                break;
+//              default: validUVs = false; break;
+//            }
+//
+//            uvs[v] = uv;
+//          }
+//        }
+//      }
+//
+//      if(!validTriangle)
+//        continue;
+//
+//      // 使用Heron公式计算3D表面积
+//      float a = getLength(positions[0], positions[1]);
+//      float b = getLength(positions[0], positions[2]);
+//      float c = getLength(positions[1], positions[2]);
+//
+//      float s = (a + b + c) * 0.5f;
+//      float area = sqrtf(s * (s - a) * (s - b) * (s - c));
+//
+//      totalSurfaceArea += area;
+//
+//      // 如果有有效UV和纹理，计算纹理空间面积
+//      if(validUVs && texDesc)
+//      {
+//        // 将UV坐标转换为像素坐标并计算纹理空间三角形面积
+//        float x1 = uvs[0].x;
+//        float y1 = uvs[0].y;
+//        float x2 = uvs[1].x;
+//        float y2 = uvs[1].y;
+//        float x3 = uvs[2].x;
+//        float y3 = uvs[2].y;
+//
+//        // 规范化UV坐标（处理包装）
+//        x1 = fmod(x1, 1.0f);
+//        if(x1 < 0.0f)
+//          x1 += 1.0f;
+//        y1 = fmod(y1, 1.0f);
+//        if(y1 < 0.0f)
+//          y1 += 1.0f;
+//        x2 = fmod(x2, 1.0f);
+//        if(x2 < 0.0f)
+//          x2 += 1.0f;
+//        y2 = fmod(y2, 1.0f);
+//        if(y2 < 0.0f)
+//          y2 += 1.0f;
+//        x3 = fmod(x3, 1.0f);
+//        if(x3 < 0.0f)
+//          x3 += 1.0f;
+//        y3 = fmod(y3, 1.0f);
+//        if(y3 < 0.0f)
+//          y3 += 1.0f;
+//
+//        // 转换为像素坐标
+//        x1 *= texWidth;
+//        y1 *= texHeight;
+//        x2 *= texWidth;
+//        y2 *= texHeight;
+//        x3 *= texWidth;
+//        y3 *= texHeight;
+//
+//        // 使用叉积公式计算面积
+//        float texArea = 0.5f * abs((x1 * (y2 - y3) + x2 * (y3 - y1) + x3 * (y1 - y2)));
+//        totalTextureArea += texArea;
+//      }
+//    }
+//
+//    // 计算像素密度 - 参考model_ppm.cpp中的计算方法
+//    float pixelDensity = 0.0f;
+//    if(totalSurfaceArea > 0.0f && totalTextureArea > 0.0f)
+//    {
+//      // 与model_ppm.cpp保持一致，取sqrt(纹理面积/3D面积)
+//      pixelDensity = sqrt(totalTextureArea / totalSurfaceArea);
+//    }
+//
+//    // 输出到CSV - 移除pathUtf8
+//    QString meshName = m_Ctx.GetResourceName(vbufId);
+//    QString textureName = m_Ctx.GetResourceName(textureId);
+//
+//    QByteArray meshNameUtf8 = meshName.toUtf8();
+//    QByteArray textureNameUtf8 = textureName.toUtf8();
+//
+//    QString line;
+//    QString sanitizedPath = passPath;
+//    std::string stdString = sanitizedPath.toStdString();
+//    stdString.erase(std::remove(stdString.begin(), stdString.end(), ','), stdString.end());
+//    sanitizedPath = QString::fromStdString(stdString);
+//    line.sprintf("%u,%s,%u,%s,%u,%f,%f,%u,%s,%f\n", action->eventId, qPrintable(sanitizedPath),
+//                 vbufId,
+//                 meshNameUtf8.constData(), triangleCount, totalSurfaceArea, totalTextureArea,
+//                 textureId, textureNameUtf8.constData(), pixelDensity);
+//
+//    out << line;
+//  };
+//
+//  // 递归处理所有绘制调用的函数
+//  std::function<void(IReplayController *, const rdcarray<ActionDescription> *, const QString &)>
+//      processActionList;
+//  processActionList = [&processDrawcall, &processActionList](
+//                          IReplayController *r, const rdcarray<ActionDescription> *actions,
+//                          const QString &currentPath) {
+//    for(const ActionDescription &action : *actions)
+//    {
+//      // 为此操作创建路径
+//      QString actionName = QString(action.customName);
+//      if(actionName.isEmpty())
+//        actionName = QStringLiteral("unnamed");
+//
+//      QString newPath = currentPath;
+//      if(!newPath.isEmpty())
+//        newPath += QStringLiteral("/");
+//      newPath += actionName;
+//
+//      // 如果这是一个实际的绘制调用（不仅仅是标记）
+//      if(action.flags & ActionFlags::Drawcall)
+//      {
+//        // 处理此绘制调用
+//        processDrawcall(r, &action, newPath);
+//      }
+//
+//      // 递归处理所有子项
+//      if(!action.children.empty())
+//      {
+//        processActionList(r, &action.children, newPath);
+//      }
+//    }
+//  };
+//
+//  // 处理所有绘制调用
+//  m_Ctx.Replay().BlockInvoke([&actions, &processActionList](IReplayController *r) {
+//    processActionList(r, &actions, QString());
+//  });
+//
+//  file.close();
+//
+//  // 恢复光标
+//  QApplication::restoreOverrideCursor();
+//
+//  // 显示完成消息
+//  RDDialog::information(this, tr("Export Success"),
+//                        tr("Mesh surface area data has been exported to:\n%1").arg(filePath));
+//}
+
 void TextureViewer::on_saveTexDensity_clicked()
 {
   if(!m_Ctx.IsCaptureLoaded())
@@ -5048,9 +5452,10 @@ void TextureViewer::on_saveTexDensity_clicked()
 
   QTextStream out(&file);
 
-  // 修改CSV表头，使其与计算方法一致
+  // 修改CSV表头，添加空间网格密度列
   out << "Drawcall ID,Pass Path,Mesh ID,Mesh Name,Triangle Count,Surface Area(m^2),Texture "
-         "Area(pixels^2),Related Texture ID,Related Texture Name,Pixel Density(pixels/m^2)\n";
+         "Area(pixels^2),Related Texture ID,Related Texture Name,Pixel "
+         "Density(pixels/m^2),Simplified Density(pixels/m^2),Mesh Density(triangles/m)\n";
 
   // 显示忙碌光标
   QApplication::setOverrideCursor(QCursor(Qt::WaitCursor));
@@ -5260,7 +5665,7 @@ void TextureViewer::on_saveTexDensity_clicked()
 
         positions[v] = pos;
 
-        // 读取UV数据
+        // 读取UV数据如果可用
         if(validUVs)
         {
           const VertexInputAttribute &uvAttr = attrs[uvAttrIndex];
@@ -5354,11 +5759,24 @@ void TextureViewer::on_saveTexDensity_clicked()
     float pixelDensity = 0.0f;
     if(totalSurfaceArea > 0.0f && totalTextureArea > 0.0f)
     {
-      // 与model_ppm.cpp保持一致，取sqrt(纹理面积/3D面积)
       pixelDensity = sqrt(totalTextureArea / totalSurfaceArea);
     }
 
-    // 输出到CSV - 移除pathUtf8
+    // 新增：计算简化纹理密度，直接使用纹理尺寸
+    float simplifiedDensity = 0.0f;
+    if(totalSurfaceArea > 0.0f && texWidth > 0 && texHeight > 0)
+    {
+      simplifiedDensity = sqrt(float(texWidth * texHeight) / totalSurfaceArea);
+    }
+
+    // 新增：计算空间网格密度，参考model_ppm.cpp中的计算方法
+    float meshDensity = 0.0f;
+    if(totalSurfaceArea > 0.0f)
+    {
+      meshDensity = sqrt(float(triangleCount) / totalSurfaceArea);
+    }
+
+    // 输出到CSV
     QString meshName = m_Ctx.GetResourceName(vbufId);
     QString textureName = m_Ctx.GetResourceName(textureId);
 
@@ -5370,10 +5788,12 @@ void TextureViewer::on_saveTexDensity_clicked()
     std::string stdString = sanitizedPath.toStdString();
     stdString.erase(std::remove(stdString.begin(), stdString.end(), ','), stdString.end());
     sanitizedPath = QString::fromStdString(stdString);
-    line.sprintf("%u,%s,%u,%s,%u,%f,%f,%u,%s,%f\n", action->eventId, qPrintable(sanitizedPath),
-                 vbufId,
-                 meshNameUtf8.constData(), triangleCount, totalSurfaceArea, totalTextureArea,
-                 textureId, textureNameUtf8.constData(), pixelDensity);
+
+    // 修改输出行，添加空间网格密度
+    line.sprintf("%u,%s,%u,%s,%u,%f,%f,%u,%s,%f,%f,%f\n", action->eventId,
+                 qPrintable(sanitizedPath), vbufId, meshNameUtf8.constData(), triangleCount,
+                 totalSurfaceArea, totalTextureArea, textureId, textureNameUtf8.constData(),
+                 pixelDensity, simplifiedDensity, meshDensity);
 
     out << line;
   };
