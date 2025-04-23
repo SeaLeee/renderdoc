@@ -5,6 +5,7 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import seaborn as sns
 from io import BytesIO
+import glob
 
 def clean_and_analyze_texture_density(csv_file, output_dir=None):
     """
@@ -22,6 +23,9 @@ def clean_and_analyze_texture_density(csv_file, output_dir=None):
     
     # 确保输出目录存在
     os.makedirs(output_dir, exist_ok=True)
+    
+    # 从文件名提取基本名称(不含路径和扩展名)
+    base_name = os.path.splitext(os.path.basename(csv_file))[0]
     
     # 读取CSV数据
     df = pd.read_csv(csv_file)
@@ -55,7 +59,7 @@ def clean_and_analyze_texture_density(csv_file, output_dir=None):
             break
     
     if not pixel_density_col:
-        raise ValueError("找不到像素密度列。请检查CSV文件包含'Pixel Density'列。")
+        raise ValueError(f"找不到像素密度列。请检查CSV文件 {csv_file} 包含'Pixel Density'列。")
     
     print(f"找到像素密度列: {pixel_density_col}")
     print(f"找到简化密度列: {simplified_density_col}")
@@ -91,7 +95,7 @@ def clean_and_analyze_texture_density(csv_file, output_dir=None):
     print(path_group_counts)
     
     # 3. 生成Excel报告
-    excel_file = os.path.join(output_dir, 'texture_density_analysis.xlsx')
+    excel_file = os.path.join(output_dir, f'{base_name}_analysis.xlsx')
     with pd.ExcelWriter(excel_file, engine='xlsxwriter') as writer:
         # 3.1 清洗后的数据
         df_cleaned.to_excel(writer, sheet_name='清洗后数据', index=False)
@@ -112,6 +116,80 @@ def clean_and_analyze_texture_density(csv_file, output_dir=None):
         path_stats.columns = ['_'.join(col).strip() for col in path_stats.columns.values]
         path_stats.reset_index(inplace=True)
         path_stats.to_excel(writer, sheet_name='路径组统计', index=False)
+        
+        # 新增: 密度平均值汇总表格
+        density_avg_dict = {'路径组': []}
+        metrics_labels = {}
+        
+        if pixel_density_col:
+            density_avg_dict['空间纹理密度平均值'] = []
+            metrics_labels['空间纹理密度平均值'] = pixel_density_col
+            
+        if simplified_density_col:
+            density_avg_dict['简化纹理密度平均值'] = []
+            metrics_labels['简化纹理密度平均值'] = simplified_density_col
+            
+        if mesh_density_col:
+            density_avg_dict['空间网格密度平均值'] = []
+            metrics_labels['空间网格密度平均值'] = mesh_density_col
+        
+        # 添加样本数列
+        density_avg_dict['样本数'] = []
+        
+        # 计算每个分类的平均密度
+        for group in path_group_counts.index:
+            group_df = df_cleaned[df_cleaned['PathGroup'] == group]
+            
+            density_avg_dict['路径组'].append(group)
+            density_avg_dict['样本数'].append(len(group_df))
+            
+            if pixel_density_col:
+                density_avg_dict['空间纹理密度平均值'].append(group_df[pixel_density_col].mean())
+                
+            if simplified_density_col:
+                density_avg_dict['简化纹理密度平均值'].append(group_df[simplified_density_col].mean())
+                
+            if mesh_density_col:
+                density_avg_dict['空间网格密度平均值'].append(group_df[mesh_density_col].mean())
+        
+        # 创建并保存汇总表格
+        density_avg_df = pd.DataFrame(density_avg_dict)
+        density_avg_df.to_excel(writer, sheet_name='密度平均值汇总', index=False)
+        
+        # 为平均值汇总表添加条形图
+        workbook = writer.book
+        worksheet = writer.sheets['密度平均值汇总']
+        
+        # 按样本数量排序，只显示前10个最主要的组
+        top_groups_df = density_avg_df.sort_values('样本数', ascending=False).head(10)
+        
+        # 为每个密度指标创建图表
+        chart_row_position = len(density_avg_df) + 3
+        
+        for i, metric_name in enumerate(['空间纹理密度平均值', '简化纹理密度平均值', '空间网格密度平均值']):
+            if metric_name in density_avg_dict:
+                # 创建条形图
+                chart = workbook.add_chart({'type': 'column'})
+                
+                # 添加数据
+                worksheet.write_row(chart_row_position, 0, ['路径组'] + top_groups_df['路径组'].tolist())
+                worksheet.write_row(chart_row_position+1, 0, [metric_name] + top_groups_df[metric_name].tolist())
+                
+                chart.add_series({
+                    'name': metric_name,
+                    'categories': ['密度平均值汇总', chart_row_position, 1, chart_row_position, len(top_groups_df)],
+                    'values': ['密度平均值汇总', chart_row_position+1, 1, chart_row_position+1, len(top_groups_df)],
+                })
+                
+                # 设置图表标题和轴标签
+                chart.set_title({'name': f'各路径组{metric_name}'})
+                chart.set_x_axis({'name': '路径组'})
+                chart.set_y_axis({'name': f'{metrics_labels.get(metric_name, metric_name)}'})
+                
+                # 插入图表
+                worksheet.insert_chart(chart_row_position+3+i*15, 1, chart, {'x_scale': 1.5, 'y_scale': 1.5})
+                
+                chart_row_position += 3
         
         # 3.3 路径组分布
         path_group_counts_df = pd.DataFrame({
@@ -193,8 +271,6 @@ def clean_and_analyze_texture_density(csv_file, output_dir=None):
                 group_df.to_excel(writer, sheet_name=sheet_name, index=False)
         
         # 3.7 添加嵌入式图表 (可选)
-        workbook = writer.book
-        
         # 添加密度分布图表
         for metric in metrics_to_process:
             sheet_name = metric.replace('(', '_').replace(')', '_').replace('/', '_')[:31]
@@ -217,12 +293,24 @@ def clean_and_analyze_texture_density(csv_file, output_dir=None):
     return df_cleaned, excel_file
 
 if __name__ == "__main__":
-    import sys
+    # 创建result文件夹，用于保存所有输出
+    result_dir = os.path.join(os.getcwd(), "result")
+    os.makedirs(result_dir, exist_ok=True)
     
-    if len(sys.argv) > 1:
-        csv_file = sys.argv[1]
-        output_dir = sys.argv[2] if len(sys.argv) > 2 else None
-        clean_and_analyze_texture_density(csv_file, output_dir)
+    # 获取当前目录下所有的CSV文件
+    csv_files = glob.glob('*.csv')
+    
+    if not csv_files:
+        print("当前目录下未找到CSV文件!")
     else:
-        print("使用方法: python dataprocess.py <csv文件路径> [输出目录]")
-        print("示例: python dataprocess.py texDensity.csv ./density_reports")
+        print(f"找到 {len(csv_files)} 个CSV文件，开始处理...")
+        
+        # 处理每个CSV文件
+        for i, csv_file in enumerate(csv_files):
+            try:
+                print(f"\n正在处理文件 {i+1}/{len(csv_files)}: {csv_file}")
+                clean_and_analyze_texture_density(csv_file, result_dir)
+            except Exception as e:
+                print(f"处理文件 {csv_file} 时出错: {e}")
+        
+        print("\n所有CSV文件处理完成! 结果保存在 result 文件夹中。")
